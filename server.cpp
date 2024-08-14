@@ -1,196 +1,100 @@
-// Server part of Server-Client chat. Developed by Mr_Dezz
-
+// server.cpp
+#include "server.h"
+#include "utils.h"
 #include <iostream>
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#include <stdio.h>
-#include <vector>
-#include <string>
-#include <sstream>
 #include <stdexcept>
+#include <vector>
+#include <thread>
 
-#pragma comment(lib, "Ws2_32.lib")
-
-using namespace std;
-
-int Math(const std::string& expression) {
-    int result = 0;
-    char op;
-    int num;
-    std::stringstream ss(expression);
-
-    ss >> result; // Читаємо перше число
-
-    while (ss >> op >> num) {
-        switch (op) {
-            case '+': result += num; break;
-            case '-': result -= num; break;
-            case '*': result *= num; break;
-            case '/': 
-                if (num != 0) result /= num; 
-                else throw std::invalid_argument("Division by zero");
-                break;
-            default: throw std::invalid_argument("Invalid operator");
-        }
-    }
-
-    return result;
+Server::Server(const std::string& ip, int port) : ipAddress(ip), portNumber(port) {
+    InitializeWinSock();
+    CreateSocket();
+    BindSocket();
 }
 
-int main(void)
-{
-	
-	//Key constants
-	const char IP_SERV[] = "192.168.1.100";			// Enter local Server IP address
-	const int PORT_NUM = 12345;				// Enter Open working server port
-	const short BUFF_SIZE = 1024;			// Maximum size of buffer for exchange info between server and client
+Server::~Server() {
+    closesocket(ServSock);
+    WSACleanup();
+}
 
-	// Key variables for all program
-	int erStat;								// Keeps socket errors status
+void Server::InitializeWinSock() {
+    WSADATA wsData;
+    int erStat = WSAStartup(MAKEWORD(2, 2), &wsData);
+    if (erStat != 0) {
+        throw std::runtime_error("WinSock initialization failed");
+    }
+}
 
-	//IP in string format to numeric format for socket functions. Data is in "ip_to_num"
-	in_addr ip_to_num;
-	erStat = inet_pton(AF_INET, IP_SERV, &ip_to_num);
-	
-	if (erStat <= 0) {
-		cout << "Error in IP translation to special numeric format" << endl;
-		return 1;
-	}
-	
+void Server::CreateSocket() {
+    ServSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (ServSock == INVALID_SOCKET) {
+        throw std::runtime_error("Socket creation failed");
+    }
+}
 
-	// WinSock initialization
-	WSADATA wsData;
-		
-	erStat = WSAStartup(MAKEWORD(2,2), &wsData);
-	
-	if ( erStat != 0 ) {
-		cout << "Error WinSock version initializaion #";
-		cout << WSAGetLastError();
-		return 1;
-	}
-	else
-		cout << "WinSock initialization is OK" << endl;
-	
-	// Server socket initialization
-	SOCKET ServSock = socket(AF_INET, SOCK_STREAM, 0);
+void Server::BindSocket() {
+    in_addr ip_to_num;
+    int erStat = inet_pton(AF_INET, ipAddress.c_str(), &ip_to_num);
+    if (erStat <= 0) {
+        throw std::runtime_error("Invalid IP address format");
+    }
 
-	if (ServSock == INVALID_SOCKET) {
-		cout << "Error initialization socket # " << WSAGetLastError() << endl; 
-		closesocket(ServSock);
-		WSACleanup();
-		return 1;
-	}
-	else
-		cout << "Server socket initialization is OK" << endl;
+    servInfo.sin_family = AF_INET;
+    servInfo.sin_addr = ip_to_num;
+    servInfo.sin_port = htons(portNumber);
 
-	// Server socket binding
-	sockaddr_in servInfo;
-	ZeroMemory(&servInfo, sizeof(servInfo));	// Initializing servInfo structure
-				
-	servInfo.sin_family = AF_INET;
-	servInfo.sin_addr = ip_to_num;	
-	servInfo.sin_port = htons(PORT_NUM);
+    erStat = bind(ServSock, (sockaddr*)&servInfo, sizeof(servInfo));
+    if (erStat != 0) {
+        throw std::runtime_error("Socket binding failed");
+    }
+}
 
-	erStat = bind(ServSock, (sockaddr*)&servInfo, sizeof(servInfo));
+void Server::ListenForClients() {
+    int erStat = listen(ServSock, SOMAXCONN);
+    if (erStat != 0) {
+        throw std::runtime_error("Listening failed");
+    }
 
-	if ( erStat != 0 ) {
-		cout << "Error Socket binding to server info. Error # " << WSAGetLastError() << endl;
-		closesocket(ServSock);
-		WSACleanup();
-		return 1;
-	}
-	else 
-		cout << "Binding socket to Server info is OK" << endl;
-	
-	//Starting to listen to any Clients
-	erStat = listen(ServSock, SOMAXCONN);
+    while (true) {
+        sockaddr_in clientInfo;
+        int clientInfoSize = sizeof(clientInfo);
+        SOCKET ClientConn = accept(ServSock, (sockaddr*)&clientInfo, &clientInfoSize);
 
-	if ( erStat != 0 ) {
-		cout << "Can't start to listen to. Error # " << WSAGetLastError() << endl;
-		closesocket(ServSock);
-		WSACleanup();
-		return 1;
-	}
-	else {
-		cout << "Listening..." << endl;
-	}
-
-	//Client socket creation and acception in case of connection
-	sockaddr_in clientInfo; 
-	ZeroMemory(&clientInfo, sizeof(clientInfo));	// Initializing clientInfo structure
-
-	int clientInfo_size = sizeof(clientInfo);
-
-	SOCKET ClientConn = accept(ServSock, (sockaddr*)&clientInfo, &clientInfo_size);
-
-	if (ClientConn == INVALID_SOCKET) {
-		cout << "Client detected, but can't connect to a client. Error # " << WSAGetLastError() << endl;
-		closesocket(ServSock);
-		closesocket(ClientConn);
-		WSACleanup();
-		return 1;
-	}
-	else {
-		cout << "Connection to a client established successfully" << endl;
-		char clientIP[22];
-
-		inet_ntop(AF_INET, &clientInfo.sin_addr, clientIP, INET_ADDRSTRLEN);	// Convert connected client's IP to standard string format
-
-		cout << "Client connected with IP address " << clientIP << endl;
-
-	}
-
-	//Exchange text data between Server and Client. Disconnection if a client send "xxx"
-
-	vector <char> servBuff(BUFF_SIZE), clientBuff(BUFF_SIZE);							// Creation of buffers for sending and receiving data
-	short packet_size = 0;												// The size of sending / receiving packet in bytes
-	
-	while (true) {
-    packet_size = recv(ClientConn, servBuff.data(), servBuff.size(), 0); // Отримання даних від клієнта
-    servBuff[packet_size] = '\0'; // Додаємо нульовий термінатор
-
-    cout << "Client's message: " << servBuff.data() << endl;
-
- // Receiving packet from client.
-        // Program is waiting (system pause) until receive
-        packet_size = recv(ClientConn, servBuff.data(), servBuff.size(), 0);
-        cout << "Client's message: " << servBuff.data() << endl;
-        cout << "Your (host) message: ";
-        fgets(clientBuff.data(), clientBuff.size(), stdin);
-        // Check whether server would like to stop chatting
-        if (clientBuff[0] == 'x' && clientBuff[1] == 'x' && clientBuff[2] == 'x'){
-            shutdown(ClientConn, SD_BOTH);
-            closesocket(ServSock);
-            closesocket(ClientConn);
-            WSACleanup();
-            return 0;
+        if (ClientConn == INVALID_SOCKET) {
+            std::cerr << "Client connection failed" << std::endl;
+            continue;
         }
 
-		string clientMessage(servBuff.data());
-    	string resultMessage;
-		try {
-        int result = Math(clientMessage);
-        resultMessage = "Result: " + to_string(result);
-    } catch (const std::invalid_argument& e) {
-        resultMessage = e.what();
+        std::thread(&Server::HandleClient, this, ClientConn).detach();
     }
-		packet_size = send(ClientConn, resultMessage.c_str(), resultMessage.size(), 0);
+}
 
-		if (packet_size == SOCKET_ERROR) {
-			cout << "Can't send message to Client. Error # " << WSAGetLastError() << endl;
-			closesocket(ServSock);
-			closesocket(ClientConn);
-			WSACleanup();
-			return 1;
-		}
-		
+void Server::HandleClient(SOCKET clientSocket) {
+    std::vector<char> servBuff(1024), clientBuff(1024);
+    short packetSize;
 
-	}
+    while (true) {
+        packetSize = recv(clientSocket, servBuff.data(), servBuff.size(), 0);
+        if (packetSize <= 0) break;
+        servBuff[packetSize] = '\0';
 
-	closesocket(ServSock);
-	closesocket(ClientConn);
-	WSACleanup();
+        std::string clientMessage(servBuff.data());
+        std::string resultMessage;
+        try {
+            int result = Math(clientMessage);
+            resultMessage = "Result: " + std::to_string(result);
+        } catch (const std::invalid_argument& e) {
+            resultMessage = e.what();
+        }
 
-	return 0;
+        packetSize = send(clientSocket, resultMessage.c_str(), resultMessage.size(), 0);
+        if (packetSize == SOCKET_ERROR) break;
+    }
 
+    shutdown(clientSocket, SD_BOTH);
+    closesocket(clientSocket);
+}
+
+void Server::Start() {
+    ListenForClients();
 }
